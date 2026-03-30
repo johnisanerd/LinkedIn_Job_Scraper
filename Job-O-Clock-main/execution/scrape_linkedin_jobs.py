@@ -72,21 +72,24 @@ try:
 
         if posted_raw:
             try:
-                # Try parsing ISO format
                 posted_dt = datetime.fromisoformat(str(posted_raw).replace("Z", "+00:00"))
                 posted_dt = posted_dt.astimezone(EST)
                 excel_dt_str = posted_dt.strftime("%Y-%m-%d %H:%M")
-
                 diff_hours = (run_time - posted_dt).total_seconds() / 3600
                 diff_hours = max(0, diff_hours)
-
-                if diff_hours < 1:
-                    hours_ago_str = "< 1h ago"
-                else:
-                    hours_ago_str = f"{math.floor(diff_hours)}h ago"
+                hours_ago_str = "< 1h ago" if diff_hours < 1 else f"{math.floor(diff_hours)}h ago"
             except Exception:
-                excel_dt_str  = str(posted_raw)
-                hours_ago_str = "?"
+                # Apify returned "X hours ago" string instead of datetime
+                import re
+                match = re.search(r"(\d+)\s*hour", str(posted_raw))
+                if match:
+                    h = int(match.group(1))
+                    posted_dt = run_time - timedelta(hours=h)
+                    excel_dt_str = posted_dt.strftime("%Y-%m-%d %H:%M")
+                    hours_ago_str = f"{h}h ago"
+                else:
+                    excel_dt_str = str(posted_raw)
+                    hours_ago_str = "?"
 
         jobs[url] = {
             "title":      title,
