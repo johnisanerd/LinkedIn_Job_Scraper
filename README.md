@@ -1,2 +1,2 @@
 # LinkedIn-Scraper
-Scraper LinkedIn for Jobs given criteria
+Scrapes LinkedIn for jobs using given criteria.
