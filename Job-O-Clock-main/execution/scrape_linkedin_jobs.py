@@ -10,10 +10,13 @@ load_dotenv()
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 COMPOSIO_KEY    = os.getenv("COMPOSIO_API_KEY")
 USER_ID         = os.getenv("COMPOSIO_USER_ID")
-RECIPIENT       = "mason.fairfield@outlook.com"
+RECIPIENT       = os.getenv("RECIPIENT_EMAIL")
 
 if not APIFY_API_TOKEN:
     print("Error: APIFY_API_TOKEN not found")
+    exit(1)
+if not RECIPIENT:
+    print("Error: RECIPIENT_EMAIL not found")
     exit(1)
 if not COMPOSIO_KEY or not USER_ID:
     print("Error: COMPOSIO_API_KEY or COMPOSIO_USER_ID not found")
