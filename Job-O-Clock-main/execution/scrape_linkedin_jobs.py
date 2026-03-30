@@ -1,18 +1,31 @@
 import os
-import csv
-from datetime import datetime
+import math
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from apify_client import ApifyClient
+from composio import Composio
 
 load_dotenv()
 
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
+COMPOSIO_KEY    = os.getenv("COMPOSIO_API_KEY")
+USER_ID         = os.getenv("COMPOSIO_USER_ID")
+RECIPIENT       = "mason.fairfield@outlook.com"
 
 if not APIFY_API_TOKEN:
-    print("Error: APIFY_API_TOKEN not found in .env")
+    print("Error: APIFY_API_TOKEN not found")
+    exit(1)
+if not COMPOSIO_KEY or not USER_ID:
+    print("Error: COMPOSIO_API_KEY or COMPOSIO_USER_ID not found")
     exit(1)
 
-client = ApifyClient(APIFY_API_TOKEN)
+# Run time is noon EST = 17:00 UTC
+EST = timezone(timedelta(hours=-5))
+run_time = datetime.now(EST).replace(hour=12, minute=0, second=0, microsecond=0)
+
+client   = ApifyClient(APIFY_API_TOKEN)
+composio = Composio(api_key=COMPOSIO_KEY)
+
 actor_id = "happitap/linkedin-job-scraper"
 keywords = ["investment banking analyst", "mergers and acquisitions analyst"]
 
@@ -20,83 +33,129 @@ run_input = {
     "keywords": keywords,
     "location": "United States",
     "datePosted": "1d",
-    "proxyCountry": "US"
+    "proxyCountry": "US",
+    "maxItems": 100
 }
-# Limiting to avoid mass credits consumption if test
-run_input["maxItems"] = 100
 
 print(f"Starting actor {actor_id} with keywords: {keywords}")
 
 try:
-    run = client.actor(actor_id).call(run_input=run_input)
+    run    = client.actor(actor_id).call(run_input=run_input)
     print("Fetching results...")
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    output_file = f".tmp/jobs_{today}.csv"
-    os.makedirs(".tmp", exist_ok=True)
-    
-    headers = [
-        "job_id", "title", "company", "company_url", "location", 
-        "url", "posted_at", "experience_level", "employment_type", 
-        "is_remote", "description_snippet", "scraped_at"
-    ]
-    
+
     jobs = {}
-    
+
     for item in client.dataset(run["defaultDatasetId"]).iterate_items():
-        title = item.get("title", item.get("jobTitle", ""))
+        title       = item.get("title", item.get("jobTitle", ""))
         title_lower = title.lower()
-        
-        # filters
+
         if "analyst" not in title_lower:
             continue
         if "associate" in title_lower:
             continue
-            
+
         url = item.get("url", item.get("jobUrl", ""))
-        if not url:
+        if not url or url in jobs:
             continue
-            
-        if url in jobs:
-            continue
-            
-        job_id = str(item.get("id", item.get("jobId", "")))
-        company = item.get("company", item.get("companyName", ""))
-        company_url = item.get("companyUrl", item.get("companyLinkedinUrl", ""))
-        location = item.get("location", "")
-        posted_at = item.get("postedAt", item.get("listDate", ""))
-        experience_level = item.get("experienceLevel", item.get("seniorityLevel", ""))
-        employment_type = item.get("employmentType", "")
-        is_remote = str(item.get("isRemote", item.get("workplaceType", "") == "Remote"))
-        description_snippet = item.get("description", item.get("jobDescription", ""))
-        scraped_at = datetime.now().isoformat()
-        
+
+        company    = item.get("company", item.get("companyName", ""))
+        location   = item.get("location", "")
+        posted_raw = item.get("postedAt", item.get("listDate", ""))
+
+        # Parse posted time and calculate hours ago from noon EST
+        posted_dt    = None
+        hours_ago_str = "?"
+        excel_dt_str  = ""
+
+        if posted_raw:
+            try:
+                # Try parsing ISO format
+                posted_dt = datetime.fromisoformat(str(posted_raw).replace("Z", "+00:00"))
+                posted_dt = posted_dt.astimezone(EST)
+                excel_dt_str = posted_dt.strftime("%Y-%m-%d %H:%M")
+
+                diff_hours = (run_time - posted_dt).total_seconds() / 3600
+                diff_hours = max(0, diff_hours)
+
+                if diff_hours < 1:
+                    hours_ago_str = "< 1h ago"
+                else:
+                    hours_ago_str = f"{math.floor(diff_hours)}h ago"
+            except Exception:
+                excel_dt_str  = str(posted_raw)
+                hours_ago_str = "?"
+
         jobs[url] = {
-            "job_id": job_id,
-            "title": title,
-            "company": company,
-            "company_url": company_url,
-            "location": location,
-            "url": url,
-            "posted_at": posted_at,
-            "experience_level": experience_level,
-            "employment_type": employment_type,
-            "is_remote": is_remote,
-            "description_snippet": description_snippet[:200] if description_snippet else "",
-            "scraped_at": scraped_at
+            "title":      title,
+            "company":    company,
+            "location":   location,
+            "url":        url,
+            "excel_dt":   excel_dt_str,
+            "hours_ago":  hours_ago_str,
         }
-    
-    with open(output_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=headers)
-        writer.writeheader()
-        for job in jobs.values():
-            writer.writerow(job)
-            
+
+    today = run_time.strftime("%B %d, %Y")
+
     if not jobs:
-        print("0 jobs found matching criteria.")
+        html_body = f"""
+        <p>No Investment Banking or M&A Analyst jobs found posted in the last 24 hours for {today}.</p>
+        """
+        subject = f"IB/M&A Jobs — {today} — No results"
     else:
-        print(f"Successfully saved {len(jobs)} jobs to {output_file}")
-        
+        rows = ""
+        for j in jobs.values():
+            rows += f"""
+            <tr>
+                <td style="padding:8px;border:1px solid #ddd;">{j['title']}</td>
+                <td style="padding:8px;border:1px solid #ddd;">{j['company']}</td>
+                <td style="padding:8px;border:1px solid #ddd;">{j['location']}</td>
+                <td style="padding:8px;border:1px solid #ddd;font-family:monospace;">{j['excel_dt']}</td>
+                <td style="padding:8px;border:1px solid #ddd;text-align:center;">{j['hours_ago']}</td>
+                <td style="padding:8px;border:1px solid #ddd;"><a href="{j['url']}">Apply</a></td>
+            </tr>"""
+
+        html_body = f"""
+        <h2 style="font-family:Arial,sans-serif;">IB / M&A Analyst Jobs — {today}</h2>
+        <p style="font-family:Arial,sans-serif;color:#555;">
+            {len(jobs)} job(s) found posted in the last 24 hours. 
+            "Posted" column is formatted for Excel (YYYY-MM-DD HH:MM EST). 
+            Script ran at 12:00 PM EST.
+        </p>
+        <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;width:100%;">
+            <thead>
+                <tr style="background:#1a1a2e;color:white;">
+                    <th style="padding:10px;border:1px solid #ddd;text-align:left;">Title</th>
+                    <th style="padding:10px;border:1px solid #ddd;text-align:left;">Company</th>
+                    <th style="padding:10px;border:1px solid #ddd;text-align:left;">Location</th>
+                    <th style="padding:10px;border:1px solid #ddd;text-align:left;">Posted (EST)</th>
+                    <th style="padding:10px;border:1px solid #ddd;text-align:left;">Hours Ago</th>
+                    <th style="padding:10px;border:1px solid #ddd;text-align:left;">Link</th>
+                </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+        </table>
+        <p style="font-family:Arial,sans-serif;color:#999;font-size:11px;margin-top:20px;">
+            To use in Excel: paste the Posted column → format cells as DateTime.
+        </p>
+        """
+        subject = f"IB/M&A Jobs — {today} — {len(jobs)} found"
+
+    print(f"Sending email: {subject}")
+
+    composio.tools.execute(
+        "OUTLOOK_SEND_EMAIL",
+        user_id=USER_ID,
+        arguments={
+            "to": RECIPIENT,
+            "subject": subject,
+            "body": html_body,
+            "is_html": True
+        },
+        dangerously_skip_version_check=True
+    )
+
+    print(f"✅ Email sent! {len(jobs)} jobs.")
+
 except Exception as e:
     print(f"Error: {e}")
     exit(1)
