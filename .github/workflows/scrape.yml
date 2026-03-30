@@ -2,8 +2,8 @@ name: Daily Job Scrape
 
 on:
   schedule:
-    - cron: '0 16 * * *'  # noon EDT (UTC-4)
-  workflow_dispatch:        # lets you run it manually too
+    - cron: '0 17 * * *'  # noon EST (UTC-5)
+  workflow_dispatch:
 
 jobs:
   scrape:
@@ -23,10 +23,6 @@ jobs:
       - name: Run scraper
         env:
           APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
+          COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
+          COMPOSIO_USER_ID: ${{ secrets.COMPOSIO_USER_ID }}
         run: python Job-O-Clock-main/execution/scrape_linkedin_jobs.py
-
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        with:
-          name: jobs-${{ github.run_id }}
-          path: .tmp/jobs_*.csv
