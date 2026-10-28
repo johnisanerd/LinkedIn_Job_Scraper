@@ -81,18 +81,19 @@ def make_job(title, company, location, url, posted_raw, source):
 
 def scrape_linkedin():
     source  = "LI"
-    actor   = "happitap/linkedin-job-scraper"
+    actor   = "johnvc/linkedin-jobs-api"
     run_inp = {
-        "keywords":    KEYWORDS,
-        "location":    "United States",
-        "datePosted":  "1d",
-        "proxyCountry": "US",
-        "maxItems":    100,
+        "location":  "United States",
+        "timeRange": "past-day",
+        "maxJobs":   50,
     }
     print(f"[{source}] Starting actor {actor}")
-    jobs = {}
-    run  = client.actor(actor).call(run_input=run_inp)
-    for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+    jobs  = {}
+    items = []
+    for keyword in KEYWORDS:  # the actor takes one keyword per run
+        run    = client.actor(actor).call(run_input={**run_inp, "keyword": keyword})
+        items += client.dataset(run["defaultDatasetId"]).iterate_items()
+    for item in items:
         title = item.get("title", item.get("jobTitle", ""))
         if not is_relevant(title):
             continue
@@ -104,7 +105,7 @@ def scrape_linkedin():
             item.get("company", item.get("companyName", "")),
             item.get("location", ""),
             url,
-            item.get("postedAt", item.get("listDate", "")),
+            item.get("postedAt", item.get("listDate", item.get("postedAgo", ""))),
             source,
         )
     print(f"[{source}] {len(jobs)} jobs found")
